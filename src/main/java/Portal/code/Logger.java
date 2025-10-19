@@ -3,7 +3,6 @@ package Portal.code;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.fml.loading.FMLPaths;
 import net.minecraftforge.server.ServerLifecycleHooks;
 
 import java.io.*;
@@ -20,91 +19,20 @@ public class Logger {
     public static int currentFileNumber = 1;
     private static PrintWriter currentWriter = null;
     private static final String LOG_FOLDER = "logs";
-    private static final String CONFIG_FILE = "valkerian_nether_portal.toml";
     private static final String FILE_PREFIX = "ship-teleport-";
     private static final String FILE_EXTENSION = ".log";
     private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final Pattern FILE_NUMBER_PATTERN = Pattern.compile(FILE_PREFIX + "(\\d+)" + FILE_EXTENSION);
 
-    // Configuration variables
-    private static boolean sendLogsToAllPlayers = false;
-    private static boolean createLogFiles = false;
-
     // Static initializer - runs when class is first loaded
     static {
-        initializeConfig();
         initializeLogger();
-    }
-
-    private static void initializeConfig() {
-        try {
-            Path configDir = FMLPaths.CONFIGDIR.get();
-            Path configFile = configDir.resolve(CONFIG_FILE);
-
-            // Create config file if it doesn't exist
-            if (!Files.exists(configFile)) {
-                Files.createDirectories(configDir);
-                String defaultConfig =
-                        "# Valkerian Nether Portal Configuration\n" +
-                                "sendLogsToAllPlayers=false\n" +
-                                "createLogFiles=false\n";
-
-                Files.write(configFile, defaultConfig.getBytes());
-                System.out.println("[Portal Skies] Created default config file: " + configFile);
-            }
-
-            // Read config file
-            loadConfig(configFile);
-
-        } catch (Exception e) {
-            System.err.println("[Portal Skies] Failed to initialize config: " + e.getMessage());
-            // Use default values if config fails
-            sendLogsToAllPlayers = false;
-            createLogFiles = false;
-        }
-    }
-
-    private static void loadConfig(Path configFile) {
-        try {
-            String content = new String(Files.readAllBytes(configFile));
-            String[] lines = content.split("\n");
-
-            for (String line : lines) {
-                line = line.trim();
-                // Skip comments and empty lines
-                if (line.startsWith("#") || line.isEmpty()) continue;
-
-                String[] parts = line.split("=");
-                if (parts.length == 2) {
-                    String key = parts[0].trim();
-                    String value = parts[1].trim();
-
-                    switch (key) {
-                        case "sendLogsToAllPlayers":
-                            sendLogsToAllPlayers = Boolean.parseBoolean(value);
-                            break;
-                        case "createLogFiles":
-                            createLogFiles = Boolean.parseBoolean(value);
-                            break;
-                    }
-                }
-            }
-
-            System.out.println("[Portal Skies] Config loaded - sendLogsToAllPlayers: " + sendLogsToAllPlayers +
-                    ", createLogFiles: " + createLogFiles);
-
-        } catch (Exception e) {
-            System.err.println("[Portal Skies] Failed to load config: " + e.getMessage());
-            // Use default values if loading fails
-            sendLogsToAllPlayers = false;
-            createLogFiles = false;
-        }
     }
 
     private static void initializeLogger() {
         try {
             // Only initialize file logging if enabled in config
-            if (createLogFiles) {
+            if (Config.CREATE_LOG_FILES) {
                 // Ensure logs directory exists
                 Files.createDirectories(Paths.get(LOG_FOLDER));
 
@@ -163,19 +91,19 @@ public class Logger {
     // Main public static method
     public static void sendMessage(String message, boolean outputToPlayers) {
         // Handle new file request (only if file logging is enabled)
-        if (newFile && createLogFiles) {
+        if (newFile && Config.CREATE_LOG_FILES) {
             currentFileNumber++;
             openCurrentLogFile();
             newFile = false;
         }
 
         // Write to log file only if enabled in config
-        if (createLogFiles) {
+        if (Config.CREATE_LOG_FILES) {
             writeToLogFile(message);
         }
 
         // Output to players only if enabled in config AND requested by caller
-        if (outputToPlayers && sendLogsToAllPlayers) {
+        if (outputToPlayers && Config.SEND_LOGS_TO_ALL_PLAYERS) {
             sendToAllPlayers(message);
         }
 
@@ -184,7 +112,7 @@ public class Logger {
     }
 
     private static void writeToLogFile(String message) {
-        if (currentWriter != null && createLogFiles) {
+        if (currentWriter != null && Config.CREATE_LOG_FILES) {
             String timestamp = LocalDateTime.now().format(TIMESTAMP_FORMAT);
             currentWriter.println("[" + timestamp + "] " + message);
             currentWriter.flush(); // Ensure it's written immediately
@@ -251,14 +179,5 @@ public class Logger {
             // Ignore errors in debug method
         }
         return 0;
-    }
-
-    // Getters for configuration (optional, for external access)
-    public static boolean isSendLogsToAllPlayers() {
-        return sendLogsToAllPlayers;
-    }
-
-    public static boolean isCreateLogFiles() {
-        return createLogFiles;
     }
 }

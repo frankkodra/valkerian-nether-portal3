@@ -33,25 +33,45 @@ import java.util.*;
 public class netherPortalShipListener {
 
     private final Map<Long, Integer> portalCooldownMap = new HashMap<>();
-    private static final int PORTAL_COOLDOWN_TICKS = 100;
-    private static final double PORTAL_THRESHOLD_PERCENTAGE = 0.30;
+    private final Map<Long, BlockPos> lastKnownPositions = new HashMap<>();
+    private final Map<BlockPos, Long> portalCache = new HashMap<>();
+    private long lastCacheClear = System.currentTimeMillis();
+
 
     public netherPortalShipListener() {
         MinecraftForge.EVENT_BUS.register(this);
+        Config.load();
+
     }
+    private static int tickcount = 1;
 
     @SubscribeEvent
     public void onServerTick(TickEvent.ServerTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) return;
+       // if (event.phase != TickEvent.Phase.END) return;
 
+        // Reduce check frequency using config value
         var server = net.minecraftforge.server.ServerLifecycleHooks.getCurrentServer();
-        if (server == null) return;
+        if ( tickcount% Config.CHECK_INTERVAL_TICKS != 0){tickcount++;Logger.sendMessage("returning due to not time yet "+tickcount+" server ticks= "+server.getTickCount(),false); return;}
+        tickcount=1;
+        Logger.sendMessage("------time to check do the checks now-----",false);
+        // Clear cache periodically using config value
+        long currentTime = System.currentTimeMillis();
+        if (currentTime - lastCacheClear > Config.CACHE_CLEAR_INTERVAL) {
+            portalCache.clear();
+
+            lastCacheClear = currentTime;
+        }
 
         for (ServerLevel world : server.getAllLevels()) {
+           if(world.dimension()!=Level.OVERWORLD&&world.dimension()!=Level.NETHER){
+               continue;
+            }
             ServerShipWorldCore shipWorld = VSGameUtilsKt.getShipObjectWorld(world);
             if (shipWorld == null) continue;
 
+            // RESTORED: Original ship copying method
             List<Ship> shipsCopy = new ArrayList<>();
+            Logger.sendMessage("ships in dimension "+world.dimension().toString()+"\n"+shipWorld.getLoadedShips().size(),false);
             for (Ship ship : shipWorld.getLoadedShips()) {
                 shipsCopy.add(ship);
             }
@@ -59,11 +79,19 @@ public class netherPortalShipListener {
             for (Ship ship : shipsCopy) {
                 long shipId = ship.getId();
 
+               // if(!isShipInLoadedChunks(ship, world)) {
+               //     continue;
+               // }
+                // Skip ships on cooldown using config value
                 int cooldown = portalCooldownMap.getOrDefault(shipId, 0);
+                Logger.sendMessage("checking ship is in portal: id ="+shipId+" Cool down= "+cooldown ,true);
+
                 if (cooldown > 0) {
-                    portalCooldownMap.put(shipId, cooldown - 1);
+                    portalCooldownMap.put(shipId, portalCooldownMap.get(shipId) - Config.CHECK_INTERVAL_TICKS);
                     continue;
                 }
+
+
 
                 PortalCheckResult portalResult = isShipInPortalWithThreshold(ship, world);
                 if (portalResult.isInPortal) {
@@ -93,16 +121,17 @@ public class netherPortalShipListener {
 
                     PortalInfo portalInfo = analyzePortalSize(world, portalResult.portalCenter);
                     Vector3d portalCentVect = calculateExactPortalCenter(portalInfo, world);
-                    boolean currentWorldPortal = validatePortalForShip(portalInfo, ship, world, portalResult.portalCenter);
-
                     BlockPos portalcenter = new BlockPos((int)portalCentVect.x, (int)portalCentVect.y, (int)portalCentVect.z);
 
-                    if (targetWorld != null && currentWorldPortal) {
+                    PortalInfo currentWorldPortal = validatePortalForShip(portalInfo, ship, world, portalcenter);
+
+
+                    if (targetWorld != null && currentWorldPortal.isValid) {
                         try {
-                            PortalInfo targetPortalInfo = findAndValidatePortal(portalcenter, world, targetWorld, scale, ship);
+                            PortalInfo targetPortalInfo = findAndValidatePortal(portalInfo,portalcenter, world, targetWorld, scale, ship);
 
                             if (targetPortalInfo != null && targetPortalInfo.isValid) {
-                                TeleportPositionResult positionResult = calculateTeleportPosition(targetPortalInfo, ship, portalResult.portalCenter, world, targetWorld);
+                                TeleportPositionResult positionResult = calculateTeleportPosition(targetPortalInfo, ship, targetPortalInfo.portalCenter, world, targetWorld);
 
                                 Logger.sendMessage("[Portal Skies] Teleporting ship " + shipId + " from " + getDimensionDisplayName(currentDim) +
                                         " to " + getDimensionDisplayName(targetWorld.dimension().location().toString()), true);
@@ -126,7 +155,7 @@ public class netherPortalShipListener {
 
                                 Logger.sendMessage("[Portal Skies] DEBUG: Calling teleportShipWithFallback with rotation: " + rotationAngle + "°", true);
                                 Logger.sendMessage("[Portal Skies] DEBUG: teleportShipWithFallback completed", true);
-                                portalCooldownMap.put(shipId, PORTAL_COOLDOWN_TICKS);
+                                portalCooldownMap.put(shipId, Config.PORTAL_COOLDOWN_TICKS);
                                 Logger.startNewLogFile();
 
                             } else {
@@ -147,7 +176,42 @@ public class netherPortalShipListener {
             }
         }
     }
+    private boolean isShipInLoadedChunks(Ship ship, ServerLevel level) {
+        try {
+            // VS2 tracks which chunks ships are in - use their system
+            var activeChunksSet = ship.getActiveChunksSet();
+            if (activeChunksSet == null) return false;
 
+            // Check if the ship has any active chunks (meaning it's loaded)
+            return true;
+
+        } catch (Exception e) {
+            Logger.sendMessage("[Portal Skies] Error checking VS2 chunk loading: " + e.getMessage(), false);
+            return false;
+        }
+    }
+    // Updated isShipMoving method using config value
+    private boolean isShipMoving(Ship ship) {
+        Vector3dc velocity = ship.getVelocity();
+        double speedSquared = velocity.x() * velocity.x() + velocity.y() * velocity.y() + velocity.z() * velocity.z();
+
+        // Skip ships moving very slowly using config value
+        if (speedSquared < Config.MIN_MOVEMENT_THRESHOLD * Config.MIN_MOVEMENT_THRESHOLD) {
+            return false;
+        }
+
+        // Check position change
+        BlockPos currentPos = new BlockPos(
+                (int)ship.getTransform().getPositionInWorld().x(),
+                (int)ship.getTransform().getPositionInWorld().y(),
+                (int)ship.getTransform().getPositionInWorld().z()
+        );
+
+        BlockPos lastPos = lastKnownPositions.get(ship.getId());
+        lastKnownPositions.put(ship.getId(), currentPos);
+
+        return lastPos == null || !lastPos.equals(currentPos);
+    }
     /**
      * Simple check: Is this ship inside any other ship in the same dimension?
      */
@@ -193,7 +257,6 @@ public class netherPortalShipListener {
                 innerAABB.maxZ() <= outerAABB.maxZ() + margin;
     }
 
-
     // Calculate rotation DELTA values based on portal axis and exit direction
     private float calculateOptimalRotation(Ship ship, Direction.Axis sourceAxis, Direction.Axis targetAxis, Direction exitDirection) {
         Logger.sendMessage("[Portal Skies] === ROTATION DELTA CALCULATION ===", true);
@@ -238,6 +301,7 @@ public class netherPortalShipListener {
         Logger.sendMessage("[Portal Skies] Rotation delta to apply: " + rotationDelta + "°", true);
         return rotationDelta;
     }
+
     private ShipOrientation getShipOrientationRelativeToPortal(Ship ship, Direction.Axis portalAxis, ServerLevel world, BlockPos portalPos) {
         ShipTransform transform = ship.getTransform();
 
@@ -262,10 +326,30 @@ public class netherPortalShipListener {
         boolean isWidthParallel = rightDot > forwardDot;
         double angleToPortal = Math.toDegrees(Math.acos(isWidthParallel ? rightDot : forwardDot));
 
-        Logger.sendMessage("[Portal Skies] Ship/portal alignment:", false);
-        Logger.sendMessage("[Portal Skies] - Forward dot: " + String.format("%.3f", forwardDot), false);
-        Logger.sendMessage("[Portal Skies] - Right dot: " + String.format("%.3f", rightDot), false);
-        Logger.sendMessage("[Portal Skies] - Width parallel: " + isWidthParallel, false);
+        // ADDED DEBUG LOGS
+        Logger.sendMessage("[Portal Skies] === ORIENTATION DEBUG ===", true);
+        Logger.sendMessage("[Portal Skies] - Dimension: " + world.dimension().location().toString(), true);
+        Logger.sendMessage("[Portal Skies] - Portal Axis: " + portalAxis, true);
+        Logger.sendMessage("[Portal Skies] - Portal Position: " + portalPos.getX() + ", " + portalPos.getY() + ", " + portalPos.getZ(), true);
+        Logger.sendMessage("[Portal Skies] - Ship Forward (world): " +
+                String.format("%.3f, %.3f, %.3f", shipForward.x, shipForward.y, shipForward.z), true);
+        Logger.sendMessage("[Portal Skies] - Ship Right (world): " +
+                String.format("%.3f, %.3f, %.3f", shipRight.x, shipRight.y, shipRight.z), true);
+        Logger.sendMessage("[Portal Skies] - Portal Normal: " +
+                String.format("%.3f, %.3f, %.3f", portalNormal.x, portalNormal.y, portalNormal.z), true);
+        Logger.sendMessage("[Portal Skies] - Forward Dot: " + String.format("%.6f", forwardDot), true);
+        Logger.sendMessage("[Portal Skies] - Right Dot: " + String.format("%.6f", rightDot), true);
+        Logger.sendMessage("[Portal Skies] - Dot Difference: " + String.format("%.6f", Math.abs(forwardDot - rightDot)), true);
+        Logger.sendMessage("[Portal Skies] - Width Parallel: " + isWidthParallel, true);
+        Logger.sendMessage("[Portal Skies] - Angle to Portal: " + String.format("%.1f°", angleToPortal), true);
+
+        // Log which side is parallel
+        if (isWidthParallel) {
+            Logger.sendMessage("[Portal Skies] - RESULT: WIDTH (X) parallel to portal", true);
+        } else {
+            Logger.sendMessage("[Portal Skies] - RESULT: LENGTH (Z) parallel to portal", true);
+        }
+        Logger.sendMessage("[Portal Skies] === END ORIENTATION DEBUG ===", true);
 
         return new ShipOrientation(
                 isWidthParallel ? "WIDTH" : "LENGTH",
@@ -273,8 +357,6 @@ public class netherPortalShipListener {
                 isWidthParallel
         );
     }
-
-
 
     private Direction.Axis getPortalAxisAt(ServerLevel world, BlockPos portalPos) {
         BlockState state = world.getBlockState(portalPos);
@@ -300,9 +382,9 @@ public class netherPortalShipListener {
             double shipLength = shipAABB.maxZ() - shipAABB.minZ();
             double shipLongestDimension = Math.max(shipWidth, shipLength);
 
-              Logger.sendMessage("[Portal Skies] Ship dimensions (local): " +
+            Logger.sendMessage("[Portal Skies] Ship dimensions (local): " +
                     String.format("%.1fx%.1fx%.1f", shipWidth, shipHeight, shipLength) +
-                  " (longest: " + shipLongestDimension + ")", false);
+                    " (longest: " + shipLongestDimension + ")", false);
             Direction.Axis sourceAxis = getPortalAxisAt(sourceWorld, sourcePortalPos);
 
             Direction approachDirection = calculateShipApproachDirection(ship, sourcePortalPos, portalInfo.axis, sourceWorld, sourceAxis);
@@ -315,7 +397,7 @@ public class netherPortalShipListener {
             // Get source portal axis
             Direction adjustedExitDirection = approachDirection;
             if (sourceAxis != portalInfo.axis && approachDirection == Direction.WEST) {
-                  Logger.sendMessage("[Portal Skies] - Adjusting exit direction: " + adjustedExitDirection, false);
+                Logger.sendMessage("[Portal Skies] - Adjusting exit direction: " + adjustedExitDirection, false);
             }
             if (sourceAxis != portalInfo.axis && approachDirection == Direction.SOUTH) {
                 Logger.sendMessage("[Portal Skies] - Adjusting exit direction: " + adjustedExitDirection, false);
@@ -330,25 +412,23 @@ public class netherPortalShipListener {
             );
 
             Logger.sendMessage("[Portal Skies] Exact exit position: " +
-                  String.format("%.2f, %.2f, %.2f", exactExitPosition.x, exactExitPosition.y, exactExitPosition.z), false);
+                    String.format("%.2f, %.2f, %.2f", exactExitPosition.x, exactExitPosition.y, exactExitPosition.z), false);
 
-            // result.hasEnoughSpace = checkDestinationSpace(exactExitPosition, ship, approachDirection, sourceWorld, targetWorld);
             result.teleportPos = exitPosition;
             result.exactTeleportPos = exactExitPosition;
             result.exitDirection = adjustedExitDirection;
 
             Logger.sendMessage("[Portal Skies] Final position calculation:", false);
             Logger.sendMessage("[Portal Skies] - Portal center: " +
-                  String.format("%.2f, %.2f, %.2f", exactPortalCenter.x, exactPortalCenter.y, exactPortalCenter.z), false);
+                    String.format("%.2f, %.2f, %.2f", exactPortalCenter.x, exactPortalCenter.y, exactPortalCenter.z), false);
             Logger.sendMessage("[Portal Skies] - Exit direction: " + adjustedExitDirection, false);
             Logger.sendMessage("[Portal Skies] - Final block position: " + exitPosition, false);
             Logger.sendMessage("[Portal Skies] - Exact final position: " +
-                  String.format("%.2f, %.2f, %.2f", exactExitPosition.x, exactExitPosition.y, exactExitPosition.z), false);
+                    String.format("%.2f, %.2f, %.2f", exactExitPosition.x, exactExitPosition.y, exactExitPosition.z), false);
             Logger.sendMessage("[Portal Skies] - Enough space: " + result.hasEnoughSpace, false);
 
         } catch (Exception e) {
             Logger.sendMessage("[Portal Skies] Error calculating teleport position: " + e.getMessage(), false);
-            //result.hasEnoughSpace = false;
         }
 
         return result;
@@ -369,10 +449,10 @@ public class netherPortalShipListener {
             }
 
             Logger.sendMessage("[Portal Skies] Portal bounds - X:" + portalInfo.minX + "-" + portalInfo.maxX +
-                  " Y:" + portalInfo.minY + "-" + portalInfo.maxY + " Z:" + portalInfo.minZ + "-" + portalInfo.maxZ, false);
+                    " Y:" + portalInfo.minY + "-" + portalInfo.maxY + " Z:" + portalInfo.minZ + "-" + portalInfo.maxZ, false);
             Logger.sendMessage("[Portal Skies] Portal dimensions: " + portalInfo.actualWidth + "x" + portalInfo.actualHeight, false);
             Logger.sendMessage("[Portal Skies] World coordinate center: " +
-                 String.format("%.2f, %.2f, %.2f", centerX, centerY, centerZ), false);
+                    String.format("%.2f, %.2f, %.2f", centerX, centerY, centerZ), false);
 
             return new Vector3d(centerX, centerY, centerZ);
 
@@ -504,22 +584,21 @@ public class netherPortalShipListener {
 
     private PortalCheckResult isShipInPortalWithThreshold(Ship ship, ServerLevel level) {
         try {
-            // Use ShipAABB for accurate collision detection in local coordinates
             var shipAABB = ship.getShipAABB();
             if (shipAABB == null) return new PortalCheckResult(false, BlockPos.ZERO);
 
-            // Get ship transform to convert local coordinates to world coordinates
             ShipTransform transform = ship.getTransform();
 
-            // Sample key points of the ship's actual collision shape
-            Vector3d[] collisionPoints = getShipCollisionPoints(shipAABB);
+            // Use configurable sampling
+            Vector3d[] collisionPoints = getConfigurableCollisionPoints(shipAABB);
+
+            Logger.sendMessage("[Portal Skies] DEBUG: Checking " + collisionPoints.length + " points for ship " + ship.getId(), false);
 
             int portalBlockCount = 0;
-            int totalX = 0, totalY = 0, totalZ = 0;
 
             // Check each collision point in world space
-            for (Vector3d localPoint : collisionPoints) {
-                // Transform local point to world coordinates
+            for (int i = 0; i < collisionPoints.length; i++) {
+                Vector3d localPoint = collisionPoints[i];
                 Vector3d worldPoint = new Vector3d(localPoint);
                 transform.getShipToWorld().transformPosition(worldPoint);
 
@@ -529,20 +608,21 @@ public class netherPortalShipListener {
                         (int) Math.floor(worldPoint.z)
                 );
 
+                // Quick bounds check
+                if (!level.isInWorldBounds(worldPos)) continue;
+
                 if (level.getBlockState(worldPos).getBlock() instanceof NetherPortalBlock) {
                     portalBlockCount++;
-                    totalX += worldPos.getX();
-                    totalY += worldPos.getY();
-                    totalZ += worldPos.getZ();
 
-                    // Return immediately on first portal block found
-                    BlockPos portalCenter = new BlockPos(totalX / portalBlockCount, totalY / portalBlockCount, totalZ / portalBlockCount);
-                      Logger.sendMessage("[Portal Skies] Ship collision point in portal at: " +
+
+                    Logger.sendMessage("[Portal Skies] Ship collision point in portal at: " +
                             worldPos.getX() + ", " + worldPos.getY() + ", " + worldPos.getZ(), false);
-                    return new PortalCheckResult(true, portalCenter);
+
+                    return new PortalCheckResult(true, worldPos);
                 }
             }
 
+            Logger.sendMessage("[Portal Skies] DEBUG: No portal blocks found at sampling points", false);
             return new PortalCheckResult(false, BlockPos.ZERO);
 
         } catch (Exception e) {
@@ -551,8 +631,7 @@ public class netherPortalShipListener {
         }
     }
 
-    private Vector3d[] getShipCollisionPoints(AABBic shipAABB) {
-        // Get the 8 corners of the ship's collision box
+    private Vector3d[] getConfigurableCollisionPoints(AABBic shipAABB) {
         int minX = shipAABB.minX();
         int minY = shipAABB.minY();
         int minZ = shipAABB.minZ();
@@ -560,36 +639,107 @@ public class netherPortalShipListener {
         int maxY = shipAABB.maxY();
         int maxZ = shipAABB.maxZ();
 
-        return new Vector3d[] {
-                new Vector3d(minX, minY, minZ), // bottom NW
-                new Vector3d(minX, minY, maxZ), // bottom SW
-                new Vector3d(maxX, minY, minZ), // bottom NE
-                new Vector3d(maxX, minY, maxZ), // bottom SE
-                new Vector3d(minX, maxY, minZ), // top NW
-                new Vector3d(minX, maxY, maxZ), // top SW
-                new Vector3d(maxX, maxY, minZ), // top NE
-                new Vector3d(maxX, maxY, maxZ), // top SE
-                new Vector3d((minX + maxX) / 2.0, (minY + maxY) / 2.0, (minZ + maxZ) / 2.0) // center
+        List<Vector3d> points = new ArrayList<>();
+
+        double centerX = (minX + maxX) / 2.0;
+        double centerY = (minY + maxY) / 2.0;
+        double centerZ = (minZ + maxZ) / 2.0;
+
+        int samples = Config.PORTAL_SAMPLES_PER_FACE;
+        int skipInterval = Config.PORTAL_FACE_SKIP_INTERVAL;
+
+        // Define all 6 faces of the ship
+        Face[] faces = {
+                new Face("FRONT", minX, maxX, minY, maxY, maxZ, maxZ),  // Z max
+                new Face("BACK", minX, maxX, minY, maxY, minZ, minZ),   // Z min
+                new Face("RIGHT", maxX, maxX, minY, maxY, minZ, maxZ),  // X max
+                new Face("LEFT", minX, minX, minY, maxY, minZ, maxZ),   // X min
+                new Face("TOP", minX, maxX, maxY, maxY, minZ, maxZ),    // Y max
+                new Face("BOTTOM", minX, maxX, minY, minY, minZ, maxZ)  // Y min
         };
+
+        // Always add front and back faces if configured
+        if (Config.PORTAL_ALWAYS_CHECK_FRONT_BACK) {
+            addFacePoints(points, faces[0], samples); // FRONT
+            addFacePoints(points, faces[1], samples); // BACK
+        }
+
+        // Add other faces based on skip interval
+        for (int i = 2; i < faces.length; i++) { // Start from 2 to skip front/back (already added)
+            if (skipInterval == 0 || i % (skipInterval + 1) == 0) {
+                addFacePoints(points, faces[i], samples);
+            }
+        }
+
+        // Always add center points
+        points.add(new Vector3d(centerX, centerY, maxZ)); // Front center
+        points.add(new Vector3d(centerX, centerY, minZ)); // Back center
+        points.add(new Vector3d(centerX, centerY, centerZ)); // Ship center
+
+        Logger.sendMessage("[Portal Skies] DEBUG: Generated " + points.size() + " sampling points " +
+                "(samples: " + samples + ", skip: " + skipInterval + ")", false);
+
+        return points.toArray(new Vector3d[0]);
     }
 
-    private PortalInfo findAndValidatePortal(BlockPos sourcePortalPos, ServerLevel sourceWorld, ServerLevel targetWorld, double scale, Ship ship) {
+    private void addFacePoints(List<Vector3d> points, Face face, int samples) {
+        for (int row = 0; row < samples; row++) {
+            for (int col = 0; col < samples; col++) {
+                double x = face.minX + (face.maxX - face.minX) * (col + 0.5) / samples;
+                double y = face.minY + (face.maxY - face.minY) * (row + 0.5) / samples;
+                double z = face.minZ + (face.maxZ - face.minZ) * 0.5; // Use face Z coordinate
+
+                points.add(new Vector3d(x, y, z));
+            }
+        }
+    }
+
+    // Helper class to represent a ship face
+    private static class Face {
+        public final String name;
+        public final double minX, maxX, minY, maxY, minZ, maxZ;
+
+        public Face(String name, double minX, double maxX, double minY, double maxY, double minZ, double maxZ) {
+            this.name = name;
+            this.minX = minX;
+            this.maxX = maxX;
+            this.minY = minY;
+            this.maxY = maxY;
+            this.minZ = minZ;
+            this.maxZ = maxZ;
+        }
+    }
+
+    // Fast portal block check with caching
+    private boolean isPortalBlockFast(ServerLevel world, BlockPos pos) {
+        try {
+            // Quick bounds check - prevents trying to access chunks that don't exist
+            if (!world.isInWorldBounds(pos)) return false;
+
+            BlockState state = world.getBlockState(pos);
+            return state.getBlock() instanceof NetherPortalBlock;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private PortalInfo findAndValidatePortal(PortalInfo sourcePortal,BlockPos sourcePortalPos, ServerLevel sourceWorld, ServerLevel targetWorld, double scale, Ship ship) {
         PortalInfo portalInfo = null;
 
         BlockPos scaledPos = calculateScaledPosition(sourcePortalPos, scale);
 
         Logger.sendMessage("[Portal Skies] Source portal at: " +
-              sourcePortalPos.getX() + ", " + sourcePortalPos.getY() + ", " + sourcePortalPos.getZ(), true);
+                sourcePortalPos.getX() + ", " + sourcePortalPos.getY() + ", " + sourcePortalPos.getZ(), true);
         Logger.sendMessage("[Portal Skies] Scaled target position: " +
-              scaledPos.getX() + ", " + scaledPos.getY() + ", " + scaledPos.getZ() + " (scale: " + scale + ")", true);
+                scaledPos.getX() + ", " + scaledPos.getY() + ", " + scaledPos.getZ() + " (scale: " + scale + ")", true);
 
-        portalInfo = findExistingPortalVanillaStyle(sourceWorld, targetWorld, scaledPos, 128, ship);
+        portalInfo = findExistingPortalVanillaStyle(sourcePortal,sourceWorld, targetWorld, scaledPos, 128, ship);
 
         if (portalInfo != null) {
             Logger.sendMessage("[Portal Skies] Found existing portal at: " +
-                  portalInfo.portalCenter.getX() + ", " + portalInfo.portalCenter.getY() + ", " + portalInfo.portalCenter.getZ() +
-                " Size: " + portalInfo.actualWidth + "x" + portalInfo.actualHeight +
-              " Axis: " + portalInfo.axis, true);
+                    portalInfo.portalCenter.getX() + ", " + portalInfo.portalCenter.getY() + ", " + portalInfo.portalCenter.getZ() +
+                    " Size: " + portalInfo.actualWidth + "x" + portalInfo.actualHeight +
+                    " Axis: " + portalInfo.axis, true);
             return portalInfo;
         }
 
@@ -611,18 +761,18 @@ public class netherPortalShipListener {
         return new BlockPos(scaledX, scaledY, scaledZ);
     }
 
-    private PortalInfo findExistingPortalVanillaStyle(ServerLevel currentWorld, ServerLevel world, BlockPos center, int searchRadius, Ship ship) {
-        if (world.dimension().location().toString().equals("minecraft:the_nether")) {
+    private PortalInfo findExistingPortalVanillaStyle(PortalInfo sourcePortal,ServerLevel currentWorld, ServerLevel targetWorld, BlockPos center, int searchRadius, Ship ship) {
+        if (targetWorld .dimension().location().toString().equals("minecraft:the_nether")) {
             searchRadius = 24;
         } else {
             searchRadius = 136;
         }
 
         Logger.sendMessage("[Portal Skies] Vanilla portal search around "
-            + center.getX() + ", " + center.getY() + ", " + center.getZ() + " (radius: " + searchRadius + ")", false);
+                + center.getX() + ", " + center.getY() + ", " + center.getZ() + " (radius: " + searchRadius + ")", false);
 
         for (int radius = 0; radius <= searchRadius; radius++) {
-              Logger.sendMessage("[Portal Skies] Searching radius " + radius, false);
+            Logger.sendMessage("[Portal Skies] Searching radius " + radius, false);
 
             for (int dx = -radius; dx <= radius; dx++) {
                 for (int dz = -radius; dz <= radius; dz++) {
@@ -630,16 +780,17 @@ public class netherPortalShipListener {
                         continue;
                     }
 
-                    for (int y = world.getMinBuildHeight(); y <= world.getMaxBuildHeight(); y += 3) {
+                    // RESTORED: Original Y-level checking (full world height)
+                    for (int y = targetWorld.getMinBuildHeight(); y <= targetWorld.getMaxBuildHeight(); y += 3) {
                         BlockPos checkPos = new BlockPos(center.getX() + dx, y, center.getZ() + dz);
 
-                        if (isValidPortalBlock(world, checkPos)) {
-                            PortalInfo portalInfo = analyzePortalSize(world, checkPos);
-                            if (portalInfo != null && validatePortalForShip(portalInfo, ship, currentWorld, checkPos)) {
+                        if (isPortalBlockFast(targetWorld, checkPos)) {
+                            PortalInfo portalInfo = analyzePortalSize(targetWorld, checkPos);
+                            if (portalInfo != null && isTargetPortalLargeEnough(portalInfo,sourcePortal)) {
                                 double distance = Math.sqrt(center.distSqr(checkPos));
                                 Logger.sendMessage("[Portal Skies] Found valid portal at: " + checkPos.getX() + ", " +
-                                            checkPos.getY() + ", " + checkPos.getZ() + " (distance: " +
-                                          String.format("%.1f", distance) + ", radius: " + radius + ")", false);
+                                        checkPos.getY() + ", " + checkPos.getZ() + " (distance: " +
+                                        String.format("%.1f", distance) + ", radius: " + radius + ")", false);
                                 return portalInfo;
                             }
                         }
@@ -648,16 +799,31 @@ public class netherPortalShipListener {
             }
         }
 
-         Logger.sendMessage("[Portal Skies] No valid portals found in vanilla search area", false);
+        Logger.sendMessage("[Portal Skies] No valid portals found in vanilla search area", false);
         return null;
+    }
+    private boolean isTargetPortalLargeEnough(PortalInfo targetPortal, PortalInfo sourcePortal) {
+        boolean isLargeEnough = targetPortal.actualWidth >= sourcePortal.requiredWidth &&
+                targetPortal.actualHeight >= sourcePortal.requiredHeight;
+
+        Logger.sendMessage("[Portal Skies] Target portal size check:", true);
+        Logger.sendMessage("[Portal Skies] - Source: " + sourcePortal.actualWidth + "x" + sourcePortal.actualHeight, true);
+        Logger.sendMessage("[Portal Skies] - Target: " + targetPortal.actualWidth + "x" + targetPortal.actualHeight, true);
+        Logger.sendMessage("[Portal Skies] - Large enough: " + isLargeEnough, true);
+
+        return isLargeEnough;
     }
 
     // Use the parallel side as width for portal validation
-    private boolean validatePortalForShip(PortalInfo portalInfo, Ship ship, ServerLevel sourceWorld, BlockPos portalPos) {
+    private  PortalInfo validatePortalForShip(PortalInfo portalInfo, Ship ship, ServerLevel sourceWorld, BlockPos portalPos) {
         var shipAABB = ship.getShipAABB();
+
         if (shipAABB == null) {
-               Logger.sendMessage("[Portal Skies] Could not get ship dimensions", false);
-            return false;
+
+           portalInfo.isValid=false;
+            Logger.sendMessage("[Portal Skies] Could not get ship dimensions", false);
+            return portalInfo;
+
         }
 
         double aabbWidth = shipAABB.maxX() - shipAABB.minX();
@@ -672,18 +838,18 @@ public class netherPortalShipListener {
         if (orientation.isWidthParallel) {
             // Ship width (X) is parallel to portal - use width dimension
             shipWidthForPortal = aabbWidth;
-             Logger.sendMessage("[Portal Skies] Ship WIDTH parallel to portal, using width: " + shipWidthForPortal, false);
+            Logger.sendMessage("[Portal Skies] Ship WIDTH parallel to portal, using width: " + shipWidthForPortal, false);
         } else {
             // Ship length (Z) is parallel to portal - use length dimension
             shipWidthForPortal = aabbLength;
-             Logger.sendMessage("[Portal Skies] Ship LENGTH parallel to portal, using length as width: " + shipWidthForPortal, false);
+            Logger.sendMessage("[Portal Skies] Ship LENGTH parallel to portal, using length as width: " + shipWidthForPortal, false);
         }
 
         double shipHeight = aabbHeight;
 
         Logger.sendMessage("[Portal Skies] === SHIP DIMENSION DEBUG ===", false);
         Logger.sendMessage("[Portal Skies] AABB dimensions: " +
-          String.format("%.1fx%.1fx%.1f", aabbWidth, aabbHeight, aabbLength), false);
+                String.format("%.1fx%.1fx%.1f", aabbWidth, aabbHeight, aabbLength), false);
         Logger.sendMessage("[Portal Skies] Portal-fitting width: " + shipWidthForPortal, false);
         Logger.sendMessage("[Portal Skies] Ship orientation: " + orientation.parallelSide + " parallel to portal", false);
 
@@ -701,7 +867,7 @@ public class netherPortalShipListener {
         Logger.sendMessage("[Portal Skies] - Actual: " + portalInfo.actualWidth + "x" + portalInfo.actualHeight, false);
         Logger.sendMessage("[Portal Skies] - Valid: " + isValid, false);
 
-        return isValid;
+        return portalInfo;
     }
 
     private boolean isValidPortalBlock(ServerLevel world, BlockPos pos) {
@@ -721,7 +887,7 @@ public class netherPortalShipListener {
             info.portalCenter = portalBlock;
             info.axis = axis;
 
-              Logger.sendMessage("[Portal Skies] Portal axis detected: " + axis, false);
+            Logger.sendMessage("[Portal Skies] Portal axis detected: " + axis, false);
 
             info = measurePortalDimensions(world, portalBlock, axis);
 
@@ -739,7 +905,7 @@ public class netherPortalShipListener {
 
         try {
             Logger.sendMessage("[Portal Skies] Starting portal measurement at: " +
-                  start.getX() + "," + start.getY() + "," + start.getZ() + " axis: " + expectedAxis, false);
+                    start.getX() + "," + start.getY() + "," + start.getZ() + " axis: " + expectedAxis, false);
 
             if (expectedAxis == Direction.Axis.X) {
                 return measureXAxisPortal(world, start);

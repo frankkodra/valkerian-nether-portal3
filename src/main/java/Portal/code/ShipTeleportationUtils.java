@@ -35,8 +35,8 @@ public class ShipTeleportationUtils {
     private record TeleportData(Vector3d newPos, Quaterniond rotation, Vector3d velocity, Vector3d omega) {}
     private record MountingData(Entity vehicle, Vec3 relativeMountPos, float yawOffset) {}
 
-    private static final double ENTITY_COLLECT_RANGE = 1.0;
-    private static final double SHIP_COLLECT_RANGE = 1.0;
+    private static final double ENTITY_COLLECT_RANGE = .5;
+    private static final double SHIP_COLLECT_RANGE = .5;
 
     private final Map<Long, TeleportData> ships = new ConcurrentHashMap<>();
     private final Map<Entity, Vec3> entityToPos = new ConcurrentHashMap<>();
