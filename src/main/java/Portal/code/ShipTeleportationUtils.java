@@ -1,5 +1,6 @@
 package Portal.code;
 
+import io.netty.util.internal.EmptyPriorityQueue;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -13,6 +14,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
+import org.jline.utils.Log;
 import org.joml.Quaterniond;
 import org.joml.Vector3d;
 import org.joml.primitives.AABBd;
@@ -840,6 +842,17 @@ public class ShipTeleportationUtils {
 
     private void teleportEntitiesRecursive() {
         Map<Entity, Vec3> entitiesToTeleport = new HashMap<>(this.entityToPos);
+        Map<ServerPlayer, Vec3> playersToTeleort = new HashMap<>();
+        for (Map.Entry<Entity,Vec3> entry:new HashMap <Entity,Vec3>(entitiesToTeleport).entrySet()) {
+            Entity entity = entry.getKey();
+            Vec3 vec = entry.getValue();
+            if (entity instanceof ServerPlayer) {
+                playersToTeleort.put((ServerPlayer) entity,vec);
+                entitiesToTeleport.remove(entity);
+                this.oldToNewEntity.put(entity, entity);
+            }
+        }
+        Logger.sendMessage("Players in players to teleport= "+playersToTeleort.size(), false);
 
         for (Map.Entry<Entity, Vec3> entry : entitiesToTeleport.entrySet()) {
             Entity entity = entry.getKey();
@@ -850,9 +863,7 @@ public class ShipTeleportationUtils {
             }
 
             Entity teleportedEntity;
-            if (entity instanceof ServerPlayer) {
-                teleportedEntity = teleportPlayerWithDoubleTeleport((ServerPlayer) entity, newLevel, newPos);
-            } else if (isRideableEntity(entity)) {
+              if (isRideableEntity(entity)) {
                 teleportedEntity = teleportRideableEntityWithReset(entity, newLevel, newPos);
             } else {
                 teleportedEntity = teleportToWithPassengers(entity, newLevel, newPos);
@@ -862,6 +873,8 @@ public class ShipTeleportationUtils {
                 this.oldToNewEntity.put(entity, teleportedEntity);
             }
         }
+            teleportPlayerWithDoubleTeleport(playersToTeleort,newLevel);
+
     }
 
     private Entity teleportRideableEntityWithReset(final Entity entity, final ServerLevel newLevel, final Vec3 newPos) {
@@ -946,38 +959,47 @@ public class ShipTeleportationUtils {
                 entityType.contains("mule") ;
     }
 
-    private Entity teleportPlayerWithDoubleTeleport(final ServerPlayer player, final ServerLevel newLevel, final Vec3 newPos) {
-        Vec3 firstPos = new Vec3(newPos.x, newPos.y + 2.0, newPos.z);
-        player.teleportTo(newLevel, firstPos.x, firstPos.y, firstPos.z, player.getYRot(), player.getXRot());
-        player.connection.resetPosition();
-        player.setPos(firstPos.x, firstPos.y, firstPos.z);
-        player.connection.teleport(firstPos.x, firstPos.y, firstPos.z, player.getYRot(), player.getXRot());
+    private void teleportPlayerWithDoubleTeleport(final Map<ServerPlayer,Vec3> players, final ServerLevel newLevel) {
 
-        try { Thread.sleep(300); } catch (InterruptedException e) {}
+        for (Map.Entry<ServerPlayer,Vec3> entry:players.entrySet()){
+            ServerPlayer player = entry.getKey();
+            Vec3 newPos = entry.getValue();
 
-        player.setDeltaMovement(0, -0.1, 0);
-        player.hurtMarked = true;
-        player.setOnGround(false);
-
-        try { Thread.sleep(300); } catch (InterruptedException e) {}
 
         player.teleportTo(newLevel, newPos.x, newPos.y + 1, newPos.z, player.getYRot(), player.getXRot());
         player.connection.resetPosition();
         player.setPos(newPos.x, newPos.y + 1, newPos.z);
         player.connection.teleport(newPos.x, newPos.y + 1, newPos.z, player.getYRot(), player.getXRot());
+    }
 
-        player.setDeltaMovement(0, 0, 0);
-        player.hurtMarked = true;
-        player.setOnGround(false);
+
+
 
         try { Thread.sleep(300); } catch (InterruptedException e) {}
 
-        player.teleportTo(newLevel, newPos.x, newPos.y + 1, newPos.z, player.getYRot(), player.getXRot());
-        player.connection.resetPosition();
-        player.setPos(newPos.x, newPos.y + 1, newPos.z);
-        player.connection.teleport(newPos.x, newPos.y + 1, newPos.z, player.getYRot(), player.getXRot());
+        for (Map.Entry<ServerPlayer,Vec3> entry:players.entrySet()){
+            ServerPlayer player = entry.getKey();
+            Vec3 newPos = entry.getValue();
 
-        return player;
+
+            player.teleportTo(newLevel, newPos.x, newPos.y + 1, newPos.z, player.getYRot(), player.getXRot());
+            player.connection.resetPosition();
+            player.setPos(newPos.x, newPos.y + 1, newPos.z);
+            player.connection.teleport(newPos.x, newPos.y + 1, newPos.z, player.getYRot(), player.getXRot());
+        }
+
+        try { Thread.sleep(300); } catch (InterruptedException e) {}
+        for (Map.Entry<ServerPlayer,Vec3> entry:players.entrySet()){
+            ServerPlayer player = entry.getKey();
+            Vec3 newPos = entry.getValue();
+
+
+            player.teleportTo(newLevel, newPos.x, newPos.y + 1, newPos.z, player.getYRot(), player.getXRot());
+            player.connection.resetPosition();
+            player.setPos(newPos.x, newPos.y + 1, newPos.z);
+            player.connection.teleport(newPos.x, newPos.y + 1, newPos.z, player.getYRot(), player.getXRot());
+        }
+
     }
 
     private void handleShipTeleport(final long id, final TeleportData data) {

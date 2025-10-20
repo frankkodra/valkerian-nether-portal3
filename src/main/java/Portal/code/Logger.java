@@ -41,11 +41,12 @@ public class Logger {
 
                 // Create or open the current log file
                 openCurrentLogFile();
-            } else {
+            } else if (Config.CONSOLE_LOGS) {
                 System.out.println("[Portal Skies] File logging is disabled in config");
             }
 
         } catch (Exception e) {
+            // Always log initialization errors to console
             System.err.println("[Portal Skies] Failed to initialize Logger: " + e.getMessage());
             e.printStackTrace();
         }
@@ -64,7 +65,9 @@ public class Logger {
                     .orElse(0); // Returns 0 if no files found, so we start at 1
 
         } catch (Exception e) {
-            System.err.println("[Portal Skies] Error scanning log files: " + e.getMessage());
+            if (Config.CONSOLE_LOGS) {
+                System.err.println("[Portal Skies] Error scanning log files: " + e.getMessage());
+            }
             return 0;
         }
     }
@@ -83,8 +86,10 @@ public class Logger {
             currentWriter = new PrintWriter(new FileWriter(logFile, true));
 
         } catch (Exception e) {
-            System.err.println("[Portal Skies] Failed to open log file: " + e.getMessage());
-            e.printStackTrace();
+            if (Config.CONSOLE_LOGS) {
+                System.err.println("[Portal Skies] Failed to open log file: " + e.getMessage());
+                e.printStackTrace();
+            }
         }
     }
 
@@ -107,8 +112,10 @@ public class Logger {
             sendToAllPlayers(message);
         }
 
-        // Always log to console for debugging
-        System.out.println("[Portal Skies] " + message);
+        // Log to console only if enabled in config
+        if (Config.CONSOLE_LOGS) {
+            System.out.println("[Portal Skies] " + message);
+        }
     }
 
     private static void writeToLogFile(String message) {
@@ -129,20 +136,26 @@ public class Logger {
                         try {
                             player.sendSystemMessage(Component.literal(message));
                         } catch (Exception e) {
-                            System.out.println("[Portal Skies] Failed to send message to player: " + e.getMessage());
+                            if (Config.CONSOLE_LOGS) {
+                                System.out.println("[Portal Skies] Failed to send message to player: " + e.getMessage());
+                            }
                         }
                     }
                 }
 
-                // Also log to console for visibility
-                System.out.println("[Portal Skies] [PLAYER-MSG] " + message);
-            } else {
+                // Also log to console for visibility (if console logs are enabled)
+                if (Config.CONSOLE_LOGS) {
+                    System.out.println("[Portal Skies] [PLAYER-MSG] " + message);
+                }
+            } else if (Config.CONSOLE_LOGS) {
                 // Fallback if server is not available
                 System.out.println("[Portal Skies] [PLAYER-MSG-SERVER-NULL] " + message);
             }
         } catch (Exception e) {
-            // Final fallback
-            System.out.println("[Portal Skies] [PLAYER-MSG-ERROR] " + message + " [Error: " + e.getMessage() + "]");
+            // Final fallback - always log errors to console
+            if (Config.CONSOLE_LOGS) {
+                System.out.println("[Portal Skies] [PLAYER-MSG-ERROR] " + message + " [Error: " + e.getMessage() + "]");
+            }
         }
     }
 

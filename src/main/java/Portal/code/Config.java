@@ -12,6 +12,7 @@ public class Config {
     public static int PORTAL_COOLDOWN_TICKS = 100;
     public static boolean SEND_LOGS_TO_ALL_PLAYERS = false;
     public static boolean CREATE_LOG_FILES = false;
+    public static boolean CONSOLE_LOGS = false; // NEW: Control console output
     public static double MIN_MOVEMENT_THRESHOLD = 0.1;
     public static long CACHE_CLEAR_INTERVAL = 30000;
 
@@ -36,6 +37,9 @@ public class Config {
                     "# Whether to create log files in the logs/ directory\n" +
                     "createLogFiles=false\n\n" +
 
+                    "# Whether to output logs to console (can be spammy)\n" +
+                    "consoleLogs=false\n\n" +
+
                     "# Minimum movement speed required to check for portals (blocks/tick)\n" +
                     "# Ships moving slower than this won't be checked to improve performance\n" +
                     "minMovementThreshold=0.1\n\n" +
@@ -54,7 +58,8 @@ public class Config {
 
                     "# Always check front and back faces regardless of skip interval\n" +
                     "# Front/back are where ships most commonly enter/exit portals\n" +
-                    "portalAlwaysCheckFrontBack=true\n";
+                    "portalAlwaysCheckFrontBack=true\n"
+            ;
 
     public static void load() {
         try {
@@ -72,10 +77,13 @@ public class Config {
             // Apply config to other classes
             applyConfig();
 
-            Logger.sendMessage("[Portal Skies] Config loaded successfully", false);
+            // Use System.out directly since Logger might not be ready yet
+            if (CONSOLE_LOGS) {
+                System.out.println("[Portal Skies] Config loaded successfully");
+            }
 
         } catch (Exception e) {
-            Logger.sendMessage("[Portal Skies] Failed to load config: " + e.getMessage(), false);
+            System.out.println("[Portal Skies] Failed to load config: " + e.getMessage());
             applyDefaults();
         }
     }
@@ -83,7 +91,9 @@ public class Config {
     private static void createDefaultConfig(Path configFile) throws IOException {
         Files.createDirectories(configFile.getParent());
         Files.write(configFile, DEFAULT_CONFIG.getBytes());
-        Logger.sendMessage("[Portal Skies] Created default config file", false);
+        if (CONSOLE_LOGS) {
+            System.out.println("[Portal Skies] Created default config file");
+        }
     }
 
     private static void readConfig(Path configFile) throws IOException {
@@ -120,6 +130,9 @@ public class Config {
                 case "createLogFiles":
                     CREATE_LOG_FILES = parseBoolean(value, false);
                     break;
+                case "consoleLogs": // NEW: Parse console logs setting
+                    CONSOLE_LOGS = parseBoolean(value, false);
+                    break;
                 case "minMovementThreshold":
                     MIN_MOVEMENT_THRESHOLD = parseDouble(value, 0.1);
                     break;
@@ -137,10 +150,14 @@ public class Config {
                     PORTAL_ALWAYS_CHECK_FRONT_BACK = parseBoolean(value, true);
                     break;
                 default:
-                    Logger.sendMessage("[Portal Skies] Unknown config option: " + key, false);
+                    if (CONSOLE_LOGS) {
+                        System.out.println("[Portal Skies] Unknown config option: " + key);
+                    }
             }
         } catch (Exception e) {
-            Logger.sendMessage("[Portal Skies] Invalid value for " + key + ": " + value, false);
+            if (CONSOLE_LOGS) {
+                System.out.println("[Portal Skies] Invalid value for " + key + ": " + value);
+            }
         }
     }
 
@@ -148,7 +165,9 @@ public class Config {
         try {
             return Integer.parseInt(value);
         } catch (NumberFormatException e) {
-            Logger.sendMessage("[Portal Skies] Using default value " + defaultValue + " for " + value, false);
+            if (CONSOLE_LOGS) {
+                System.out.println("[Portal Skies] Using default value " + defaultValue + " for " + value);
+            }
             return defaultValue;
         }
     }
@@ -156,7 +175,9 @@ public class Config {
     private static boolean parseBoolean(String value, boolean defaultValue) {
         if ("true".equalsIgnoreCase(value)) return true;
         if ("false".equalsIgnoreCase(value)) return false;
-        Logger.sendMessage("[Portal Skies] Using default value " + defaultValue + " for " + value, false);
+        if (CONSOLE_LOGS) {
+            System.out.println("[Portal Skies] Using default value " + defaultValue + " for " + value);
+        }
         return defaultValue;
     }
 
@@ -164,7 +185,9 @@ public class Config {
         try {
             return Double.parseDouble(value);
         } catch (NumberFormatException e) {
-            Logger.sendMessage("[Portal Skies] Using default value " + defaultValue + " for " + value, false);
+            if (CONSOLE_LOGS) {
+                System.out.println("[Portal Skies] Using default value " + defaultValue + " for " + value);
+            }
             return defaultValue;
         }
     }
@@ -173,22 +196,28 @@ public class Config {
         try {
             return Long.parseLong(value);
         } catch (NumberFormatException e) {
-            Logger.sendMessage("[Portal Skies] Using default value " + defaultValue + " for " + value, false);
+            if (CONSOLE_LOGS) {
+                System.out.println("[Portal Skies] Using default value " + defaultValue + " for " + value);
+            }
             return defaultValue;
         }
     }
 
     private static void applyConfig() {
-        Logger.sendMessage("[Portal Skies] Config applied:", false);
-        Logger.sendMessage("[Portal Skies] - Check interval: " + CHECK_INTERVAL_TICKS + " ticks", false);
-        Logger.sendMessage("[Portal Skies] - Cooldown: " + PORTAL_COOLDOWN_TICKS + " ticks", false);
-        Logger.sendMessage("[Portal Skies] - Player logs: " + SEND_LOGS_TO_ALL_PLAYERS, false);
-        Logger.sendMessage("[Portal Skies] - File logs: " + CREATE_LOG_FILES, false);
-        Logger.sendMessage("[Portal Skies] - Movement threshold: " + MIN_MOVEMENT_THRESHOLD, false);
-        Logger.sendMessage("[Portal Skies] - Cache clear: " + CACHE_CLEAR_INTERVAL + "ms", false);
-        Logger.sendMessage("[Portal Skies] - Portal samples per face: " + PORTAL_SAMPLES_PER_FACE, false);
-        Logger.sendMessage("[Portal Skies] - Face skip interval: " + PORTAL_FACE_SKIP_INTERVAL, false);
-        Logger.sendMessage("[Portal Skies] - Always check front/back: " + PORTAL_ALWAYS_CHECK_FRONT_BACK, false);
+        // Use direct console output for initial config loading
+        if (CONSOLE_LOGS) {
+            System.out.println("[Portal Skies] Config applied:");
+            System.out.println("[Portal Skies] - Check interval: " + CHECK_INTERVAL_TICKS + " ticks");
+            System.out.println("[Portal Skies] - Cooldown: " + PORTAL_COOLDOWN_TICKS + " ticks");
+            System.out.println("[Portal Skies] - Player logs: " + SEND_LOGS_TO_ALL_PLAYERS);
+            System.out.println("[Portal Skies] - File logs: " + CREATE_LOG_FILES);
+            System.out.println("[Portal Skies] - Console logs: " + CONSOLE_LOGS);
+            System.out.println("[Portal Skies] - Movement threshold: " + MIN_MOVEMENT_THRESHOLD);
+            System.out.println("[Portal Skies] - Cache clear: " + CACHE_CLEAR_INTERVAL + "ms");
+            System.out.println("[Portal Skies] - Portal samples per face: " + PORTAL_SAMPLES_PER_FACE);
+            System.out.println("[Portal Skies] - Face skip interval: " + PORTAL_FACE_SKIP_INTERVAL);
+            System.out.println("[Portal Skies] - Always check front/back: " + PORTAL_ALWAYS_CHECK_FRONT_BACK);
+        }
     }
 
     private static void applyDefaults() {
@@ -197,6 +226,7 @@ public class Config {
         PORTAL_COOLDOWN_TICKS = 100;
         SEND_LOGS_TO_ALL_PLAYERS = false;
         CREATE_LOG_FILES = false;
+        CONSOLE_LOGS = false; // NEW: Default to false
         MIN_MOVEMENT_THRESHOLD = 0.1;
         CACHE_CLEAR_INTERVAL = 30000;
         PORTAL_SAMPLES_PER_FACE = 3;
