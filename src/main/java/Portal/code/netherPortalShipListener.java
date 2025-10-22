@@ -483,7 +483,7 @@ public class netherPortalShipListener {
 
         double shipHeight = shipAABB.maxY() - shipAABB.minY();
 
-        double requiredClearance = (portalInfo.shipLength / 2.0) + 1.0;
+        double requiredClearance = (portalInfo.shipLength / 2.0) + 2.0;
 
         Logger.sendMessage("[Portal Skies] Ship dimensions:", false);
         Logger.sendMessage("[Portal Skies] - Length: " + portalInfo.shipLength, false);
@@ -582,8 +582,8 @@ public class netherPortalShipListener {
         } else {
             // Z→X mapping (Nether→Overworld)
             switch (sourceApproachDir) {
-                case EAST:  targetApproachDir = Direction.NORTH; break;  // East in Z → South in X
-                case WEST:  targetApproachDir = Direction.SOUTH; break;  // West in Z → North in X
+                case EAST:  targetApproachDir = Direction.SOUTH; break;  // East in Z → South in X
+                case WEST:  targetApproachDir = Direction.NORTH; break;  // West in Z → North in X
                 default:    targetApproachDir = sourceApproachDir; break;
             }
             Logger.sendMessage("[Portal Skies] Z→X axis mapping - " + sourceApproachDir + "→" + targetApproachDir, false);

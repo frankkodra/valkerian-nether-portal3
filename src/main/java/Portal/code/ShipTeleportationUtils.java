@@ -851,6 +851,13 @@ public class ShipTeleportationUtils {
                 entitiesToTeleport.remove(entity);
                 this.oldToNewEntity.put(entity, entity);
             }
+            if(entity instanceof ShipMountingEntity){
+                entitiesToTeleport.remove(entity);
+                 entity.kill();
+
+
+
+            }
         }
         Logger.sendMessage("Players in players to teleport= "+playersToTeleort.size(), false);
 
