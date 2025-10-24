@@ -183,7 +183,13 @@ repositories {
 
 dependencies {
     minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
-    runtimeOnly 'curse.maven:eureka-ships-654384:5321630'
+    implementation fg.deobf("curse.maven:eureka-ships-654384:5321630")
+
+    // But make it optional at runtime
+    runtimeOnly fg.deobf("curse.maven:eureka-ships-654384:5321630") {
+        exclude module: 'eureka-ships-654384' // This makes it optional
+    }
+
 
 
     implementation         ("org.valkyrienskies.core:api:${vs_core_version}")
